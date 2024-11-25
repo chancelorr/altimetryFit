@@ -1,0 +1,4 @@
+https://polargeospatialcenter.github.io/stac-browser/#/external/pgc-opendata-dems.s3.us-west-2.amazonaws.com/rema/strips/s2s041/2m/s67e100/SETSM_s2s041_WV03_20221212_104001007ECFC500_104001008172D300_2m_seg1.json
+https://polargeospatialcenter.github.io/stac-browser/#/external/pgc-opendata-dems.s3.us-west-2.amazonaws.com/rema/strips/s2s041/2m/s67e100/SETSM_s2s041_WV02_20220928_10300100DAC24400_10300100DBC73100_2m_lsf_seg1.json
+https://polargeospatialcenter.github.io/stac-browser/#/external/pgc-opendata-dems.s3.us-west-2.amazonaws.com/rema/strips/s2s041/2m/s67e100/SETSM_s2s041_WV03_20220312_1040010074687E00_104001007601DE00_2m_lsf_seg1.json
+https://polargeospatialcenter.github.io/stac-browser/#/external/pgc-opendata-dems.s3.us-west-2.amazonaws.com/rema/strips/s2s041/2m/s67e100/SETSM_s2s041_WV02_20211202_10300100C97C6A00_10300100CAD51F00_2m_lsf_seg1.json
