@@ -3,10 +3,16 @@
 # building off get_pgc_fullres.sh by ben
 # by chance
 
+# Arguments
+
+# PGC s3 url
 url=$1
 
+# where to put the filtered file
 output_dir=$2
 
+# filter aguments file (empty means just download the data)
+# in default_args folder
 filter_arg_file=$3
 
 dem_url=`echo $url | sed s/.json/_dem.tif/`
