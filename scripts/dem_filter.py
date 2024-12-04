@@ -65,6 +65,7 @@ def parse_input_args(args):
     parser.add_argument('--ref_dem_tol', type=float, default=50)
     parser.add_argument('--ref_dem_smooth', type=float, default=200)
     parser.add_argument('--ref_dem_erode', type=float, default=50)
+    parser.add_argument('--overwrite', type=bool, default=False)
 
 
     args=parser.parse_args()
@@ -74,16 +75,16 @@ def parse_input_args(args):
 
 def get_pgc_masks(filename, pgc_url_file):
 
-    pgc_re=re.compile('(SETSM_.*_seg\d+)')
+    pgc_re=re.compile(r'(SETSM_.*_seg\d+)')
     pgc_base=pgc_re.search(filename).group(1)
 
-    downscale_re=re.compile('(_(\d+)m).tif')
+    downscale_re=re.compile(r'(_(\d+)m).tif')
     m_down = downscale_re.search(filename)
     if m_down is None:
         resample_str=''
     else:
         resample_str = m_down.group(1)
-        pgc_re=re.compile('(SETSM_.*_seg\d+)')
+        pgc_re=re.compile(r'(SETSM_.*_seg\d+)')
         print(filename)
         pgc_base=pgc_re.search(filename).group(1)
 
@@ -128,7 +129,7 @@ def get_pgc_masks(filename, pgc_url_file):
 def get_ref_dem(ref_dem_filename, in_filename):
     """Make the reference dem subset file."""
 
-    pgc_re=re.compile('(SETSM_.*_seg\d+)')
+    pgc_re=re.compile(r'(SETSM_.*_seg\d+)')
 
     # Output / destination
     dst_filename = os.path.join(
@@ -213,6 +214,22 @@ def mask_by_smoothed_ref_dem( this_bounds, mask, z, ref_dem_sub, dec,
 
 
 def filter_dem(*args, **kwargs):
+    
+    '''
+    
+    .tmp and .done files:
+    
+    if .done file exists: data was already processed --> will skip
+    elif .tmp file exists: data is being processed by another isntance --> will skip
+    
+    if both .tmp and .done files exist: something went wrong --> need to reprocess manually
+    
+    When process finishes:
+    
+    if error --> will leave .tmp file, create .done file with error message and exit
+    if successfull --> will delete .tmp file, create .done file
+    
+    '''
 
     if isinstance(args[0], argparse.Namespace):
         args=args[0]
@@ -222,227 +239,263 @@ def filter_dem(*args, **kwargs):
                 key='-'+key
             args += [key, str(value)]
         args=parse_input_args(args)
+        
+    tmp_file = args.output_file.replace('.tif', '.tmp')
+    done_file = args.output_file.replace('.tif', '.done')
+    
+    if os.path.exists(done_file): 
+        print(f'{os.path.basename(args.output_file)} already processed, skipping...')
+        sys.exit()
+    
+    try:
+        # Attempt to create the .tmp file atomically
+        fd = os.open(tmp_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)  # Close the file descriptor to release resources
+        print(f"Created .tmp file: {tmp_file}")
+    except FileExistsError:
+        # Handle the case where the .tmp file already exists
+        print(".tmp file already exists. skipping")
+        sys.exit()
 
-    in_ds=gdal.Open(args.input_file);
-    driver = in_ds.GetDriver()
-    band = in_ds.GetRasterBand(1)
-    noData=band.GetNoDataValue()
-    if noData is None:
-        noData=0.
+    try:
+        in_ds=gdal.Open(args.input_file)
+        print(in_ds)
+        driver = in_ds.GetDriver()
+        band = in_ds.GetRasterBand(1)
+        noData=band.GetNoDataValue()
+        if noData is None:
+            noData=0.
 
-    dec=int(args.decimate_by)
-    xform_in=np.array( in_ds.GetGeoTransform())
-    dx=xform_in[1]
+        dec=int(args.decimate_by)
+        xform_in=np.array( in_ds.GetGeoTransform())
+        dx=xform_in[1]
 
-    if args.target_resolution is not None:
-        dec_low=np.floor(args.target_resolution/dx)
-        dec_high=np.ceil(args.target_resolution/dx)
-        if np.abs(args.target_resolution - dec_low*dx) < np.abs(args.target_resolution - dec_high*dx):
-            dec=int(dec_low)
+        if args.target_resolution is not None:
+            dec_low=np.floor(args.target_resolution/dx)
+            dec_high=np.ceil(args.target_resolution/dx)
+            if np.abs(args.target_resolution - dec_low*dx) < np.abs(args.target_resolution - dec_high*dx):
+                dec=int(dec_low)
+            else:
+                dec=int(dec_high)
+            print("---chose decimation value based on target resolution: %d" % dec)
+        nX=band.XSize;
+        nY=band.YSize;
+
+        xform_out=xform_in.copy()
+        xform_out[1]=xform_in[1]*dec
+        xform_out[5]=xform_in[5]*dec
+        if np.mod(dec,2)==0:   # shift output origin by 1/2 pixel if dec is even
+            xform_out[0]=xform_in[0]+xform_in[1]/2
+            xform_out[3]=xform_in[3]+xform_in[5]/2
+
+        nX_out=int(nX/dec)
+        nY_out=int(nY/dec)
+        if args.error_RMS_scale is not None:
+            out_bands=[1,2]
+            w_error=int(args.error_RMS_scale/dx/dec)
         else:
-            dec=int(dec_high)
-        print("---chose decimation value based on target resolution: %d" % dec)
-    nX=band.XSize;
-    nY=band.YSize;
+            out_bands=[1]
 
-    xform_out=xform_in.copy()
-    xform_out[1]=xform_in[1]*dec
-    xform_out[5]=xform_in[5]*dec
-    if np.mod(dec,2)==0:   # shift output origin by 1/2 pixel if dec is even
-        xform_out[0]=xform_in[0]+xform_in[1]/2
-        xform_out[3]=xform_in[3]+xform_in[5]/2
+        if os.path.isfile(args.output_file):
+            print("output_file exists,", end="", flush=True)
+            if args.overwrite:
+                print(f'deleting {args.output_file}')
+                os.remove(args.output_file)
+            else: 
+                print(f'keeping {args.output_file}')
+                sys.exit(1)
 
-    nX_out=int(nX/dec)
-    nY_out=int(nY/dec)
-    if args.error_RMS_scale is not None:
-        out_bands=[1,2]
-        w_error=int(args.error_RMS_scale/dx/dec)
-    else:
-        out_bands=[1]
+        co=["COMPRESS=LZW", "TILED=YES", "PREDICTOR=3"]
+        outDs = driver.Create(args.output_file, nX_out, nY_out, len(out_bands), gdalconst.GDT_Float32, options=co)
 
-    if os.path.isfile(args.output_file):
-        print("output_file %s exists, deleting" % args.output_file)
-        os.remove(args.output_file)
+        argDict=vars(args)
+        for key in argDict:
+            if argDict[key] is not None:
+                print("\t%s is %s" %(key, str(argDict[key])))
+                outDs.SetMetadataItem("dem_filter_"+key, str(argDict[key]))
 
-    co=["COMPRESS=LZW", "TILED=YES", "PREDICTOR=3"]
-    outDs = driver.Create(args.output_file, nX_out, nY_out, len(out_bands), gdalconst.GDT_Float32, options=co)
+        if args.smooth_scale is not None:
+            # smoothing kernel width, in pixels
+            w_smooth=args.smooth_scale/dx
 
-    argDict=vars(args)
-    for key in argDict:
-        if argDict[key] is not None:
-            print("\t%s is %s" %(key, str(argDict[key])))
-            outDs.SetMetadataItem("dem_filter_"+key, str(argDict[key]))
+        if args.erode_By is not None:
+            N_erode=np.ceil(args.erode_By/dx)
+            xg,yg=np.meshgrid(np.arange(0, N_erode)-N_erode/2, np.arange(0, N_erode)-N_erode/2)
+            k_erode=(xg**2 + yg**2) <= N_erode/2.
 
-    if args.smooth_scale is not None:
-        # smoothing kernel width, in pixels
-        w_smooth=args.smooth_scale/dx
+        if args.simplify_by is not None:
+            N_simplify=np.ceil(args.simplify_by/dx)
+            xg,yg=np.meshgrid(np.arange(0, N_simplify)-N_simplify/2, np.arange(0, N_simplify)-N_simplify/2)
+            k_simplify=(xg**2 + yg**2) <= N_simplify/2.
 
-    if args.erode_By is not None:
-        N_erode=np.ceil(args.erode_By/dx)
-        xg,yg=np.meshgrid(np.arange(0, N_erode)-N_erode/2, np.arange(0, N_erode)-N_erode/2)
-        k_erode=(xg**2 + yg**2) <= N_erode/2.
+        if args.facet_tol is not None:
+            xxg, yyg=np.meshgrid(np.arange(-8., 9), np.arange(-8., 9.))
+            opening_kernel=(xxg**2+yyg**2 <= 25)
+            closing_kernel=(xxg**2+yyg**2 <= 64)
 
-    if args.simplify_by is not None:
-         N_simplify=np.ceil(args.simplify_by/dx)
-         xg,yg=np.meshgrid(np.arange(0, N_simplify)-N_simplify/2, np.arange(0, N_simplify)-N_simplify/2)
-         k_simplify=(xg**2 + yg**2) <= N_simplify/2.
+        pad=np.max([1, int(2.*(w_smooth+N_erode)/dec)]);
+        if w_error is not None:
+            pad=np.max([1, int(2.*w_error+2.*(w_smooth+N_erode)/dec)])
 
-    if args.facet_tol is not None:
-        xxg, yyg=np.meshgrid(np.arange(-8., 9), np.arange(-8., 9.))
-        opening_kernel=(xxg**2+yyg**2 <= 25)
-        closing_kernel=(xxg**2+yyg**2 <= 64)
+        stride=int(blocksize/dec)
+        in_sub=im_subset(0, 0, nX, nY, in_ds, pad_val=0, Bands=[1])
 
-    pad=np.max([1, int(2.*(w_smooth+N_erode)/dec)]);
-    if w_error is not None:
-         pad=np.max([1, int(2.*w_error+2.*(w_smooth+N_erode)/dec)])
+        ref_dem_sub=None
+        pgc_subs=None
+        if args.pgc_masks:
+            try:
+                pgc_subs={}
+                pgc_files = get_pgc_masks(args.input_file, args.pgc_url_file)
+                for key in ['_matchtag','_bitmask']:
+                    sub_ds=gdal.Open(pgc_files[key])
+                    pgc_subs[key] = im_subset(0, 0, nX, nY, sub_ds, pad_val=0, Bands=[1])
+            except IndexError as e:
+                print(f"failed to get pgc masks for input file: {args.input_file}")
+                print('\t'+str(e))
+                pgc_subs = None
+        # use the reference DEM if the PGC subs failed
+        if args.ref_dem is not None:# and pgc_subs is None:
+            print("Using DEM for masking")
+            ref_dem_file = get_ref_dem( args.ref_dem, args.input_file )
+            ref_dem_ds = gdal.Open(ref_dem_file, gdalconst.GA_ReadOnly)
+            ref_dem_sub = im_subset(0, 0, nX, nY, ref_dem_ds, pad_val=0, Bands=[1])
+        last_time=time.time()
 
-    stride=int(blocksize/dec)
-    in_sub=im_subset(0, 0, nX, nY, in_ds, pad_val=0, Bands=[1])
+        for sub_count, out_sub in enumerate(im_subset(0, 0,  nX_out,  nY_out, outDs, pad_val=0, Bands=out_bands, stride=stride, pad=pad)):
+            this_bounds=[out_sub.c0*dec, out_sub.r0*dec, out_sub.Nc*dec, out_sub.Nr*dec]
+            #ds=gdal.Open(args.input_file);
+            #band=ds.GetRasterBand(1)
+            #in_sub=im_subset(0, 0, nX, nY, ds, pad_val=0, Bands=[1])
+            in_sub.setBounds(*this_bounds, update=True)
+            #ds=None
+            #band=None
+            z=in_sub.z[0,:,:]
+            mask=np.ones_like(in_sub.z[0,:,:], dtype=bool)
+            mask[np.isnan(in_sub.z[0,:,:])]=0
+            mask[in_sub.z[0,:,:]==noData]=0
 
-    ref_dem_sub=None
-    pgc_subs=None
-    if args.pgc_masks:
-        try:
-             pgc_subs={}
-             pgc_files = get_pgc_masks(args.input_file, args.pgc_url_file)
-             for key in ['_matchtag','_bitmask']:
-                  sub_ds=gdal.Open(pgc_files[key])
-                  pgc_subs[key] = im_subset(0, 0, nX, nY, sub_ds, pad_val=0, Bands=[1])
-        except IndexError as e:
-            print(f"failed to get pgc masks for input file: {args.input_file}")
-            print('\t'+str(e))
-            pgc_subs = None
-    # use the reference DEM if the PGC subs failed
-    if args.ref_dem is not None:# and pgc_subs is None:
-        print("Using DEM for masking")
-        ref_dem_file = get_ref_dem( args.ref_dem, args.input_file )
-        ref_dem_ds = gdal.Open(ref_dem_file, gdalconst.GA_ReadOnly)
-        ref_dem_sub = im_subset(0, 0, nX, nY, ref_dem_ds, pad_val=0, Bands=[1])
-    last_time=time.time()
+            if args.pgc_masks and pgc_subs is not None:
+                mask_pgc( this_bounds, mask, pgc_subs, dec)
 
-    for sub_count, out_sub in enumerate(im_subset(0, 0,  nX_out,  nY_out, outDs, pad_val=0, Bands=out_bands, stride=stride, pad=pad)):
-        this_bounds=[out_sub.c0*dec, out_sub.r0*dec, out_sub.Nc*dec, out_sub.Nr*dec]
-        #ds=gdal.Open(args.input_file);
-        #band=ds.GetRasterBand(1)
-        #in_sub=im_subset(0, 0, nX, nY, ds, pad_val=0, Bands=[1])
-        in_sub.setBounds(*this_bounds, update=True)
-        #ds=None
-        #band=None
-        z=in_sub.z[0,:,:]
-        mask=np.ones_like(in_sub.z[0,:,:], dtype=bool)
-        mask[np.isnan(in_sub.z[0,:,:])]=0
-        mask[in_sub.z[0,:,:]==noData]=0
+            if ref_dem_sub is not None:
+                mask_by_ref_dem(this_bounds, mask, z, ref_dem_sub, dec,
+                                ref_dem_erode = int(np.ceil(args.ref_dem_erode/dx)),
+                                smooth_sigma=args.ref_dem_smooth/dx,
+                                tol=args.ref_dem_tol)
 
-        if args.pgc_masks and pgc_subs is not None:
-            mask_pgc( this_bounds, mask, pgc_subs, dec)
+            out_temp=np.zeros([len(out_bands), stride, stride])
 
-        if ref_dem_sub is not None:
-            mask_by_ref_dem(this_bounds, mask, z, ref_dem_sub, dec,
-                            ref_dem_erode = int(np.ceil(args.ref_dem_erode/dx)),
-                            smooth_sigma=args.ref_dem_smooth/dx,
-                            tol=args.ref_dem_tol)
+            if np.all(mask.ravel()==0):
+                out_temp=out_temp+np.NaN
+                out_sub.z=out_temp
+                out_sub.setBounds(out_sub.c0+pad, out_sub.r0+pad, out_sub.Nc-2*pad, out_sub.Nr-2*pad)
+                out_sub.writeSubsetTo(out_bands, out_sub)
+                continue
 
-        out_temp=np.zeros([len(out_bands), stride, stride])
+            if (args.R_tol is not None) | (args.facet_tol is not None):
+                lap=np.abs(snd.laplace(in_sub.z[0,:,:], mode='constant', cval=0.0))
 
-        if np.all(mask.ravel()==0):
-            out_temp=out_temp+np.NaN
+            if args.R_tol is not None:
+                mask[lap>args.R_tol]=0
+
+            if args.facet_tol is not None:
+                mask1=mask.copy()
+                mask1[lap < args.facet_tol]=0
+                mask1=snd.binary_closing(snd.binary_opening(mask1, structure=opening_kernel), structure=closing_kernel)
+                #mask1=snd.binary_erosion(mask1, structure=simplify_kernel);
+                mask[mask1==0]=0
+
+            if args.smooth_scale is not None:
+                zs, mask2 = smooth_corrected(z, mask, w_smooth)
+                mask[np.abs(in_sub.z[0,:,:]-zs)>args.smooth_tol]=0.
+
+            if args.slope_tol is not None:
+                gx, gy=np.gradient(zs, dx, dx)
+                mask[gx**2+gy**2 > args.slope_tol**2]=0
+                z[mask==0]=0
+
+            if args.simplify_by is not None:
+                mask1=mask.copy()
+                mask1=snd.binary_erosion(mask1, k_simplify)
+                mask1=snd.binary_dilation(mask1, k_simplify)
+                mask[mask1==0]=0
+
+            if args.erode_By is not None:
+                mask=snd.binary_erosion(mask, k_erode)
+                z[mask==0]=0
+
+            if args.decimate_by is not None:  # smooth again and decimate
+                zs, mask1=smooth_corrected(z, mask, w_smooth)
+                zs[mask1 < .25]=0
+                mask[mask1 < .25]=0
+                if args.error_RMS_scale is not None:
+                    r2=(z-zs)**2
+                    r2[mask==0]=0
+                    r2, dummy=smooth_corrected(r2, mask, w_smooth)
+                    r2[mask==0]=0
+                    r2=r2[int(dec/2.+0.5)::dec, int(dec/2.+0.5)::dec]
+                zs=zs[int(dec/2.+0.5)::dec, int(dec/2.+0.5)::dec]  # this is now the same res as the output image, includes pad
+                #print "decimate:r2.shape=%d %d "%r2.shape
+                #print "decimate:zs.shape=%d %d "%zs.shape
+                z=zs
+                mask=mask[int(dec/2.+0.5)::dec, int(dec/2.+0.5)::dec]
+                z[mask==0]=0
+
+            if args.geolocation_error is not None and args.geolocation_error > 0:
+                gx, gy=np.gradient(zs, dec*dx, dec*dx)
+                mask1=snd.binary_erosion(mask, np.ones((3,3)))
+                gxs, mask_x=smooth_corrected(gx, mask1, 4)
+                gys, mask_y=smooth_corrected(gy, mask1, 4)
+                edge_mask=(mask==1) & (mask1==0) & (mask_x >.25)
+                gx[mask1==0]=0
+                gy[mask1==0]=0
+                gx[ edge_mask ] = gxs[edge_mask]
+                gy[ edge_mask ] = gys[edge_mask ]
+                e2_geo=(gx**2+gy**2)*args.geolocation_error**2
+                e2_geo[mask==0]=0
+            else:
+                e2_geo=np.zeros_like(zs)
+
+            if args.error_RMS_scale is not None:
+                zss, mask2=smooth_corrected(z, mask, w_error)
+                r2s, dummy=smooth_corrected(e2_geo+(zss-z)**2, mask, w_error)
+                r2, dummy=smooth_corrected(r2, mask, w_error)
+                error_est=np.sqrt(r2s+r2)
+                error_est[mask==0]=np.NaN
+                out_temp[1,:,:]=error_est[pad:-(pad)+1, pad:-(pad)+1]
+            else:
+                out_temp[1,:,:]=e2_geo[pad:-pad+1, pad:-pad+1]
+
+            z[mask==0]=np.NaN
+            out_temp[0,:,:]=z[pad:-(pad)+1, pad:-(pad)+1]
+
             out_sub.z=out_temp
             out_sub.setBounds(out_sub.c0+pad, out_sub.r0+pad, out_sub.Nc-2*pad, out_sub.Nr-2*pad)
             out_sub.writeSubsetTo(out_bands, out_sub)
-            continue
-
-        if (args.R_tol is not None) | (args.facet_tol is not None):
-            lap=np.abs(snd.laplace(in_sub.z[0,:,:], mode='constant', cval=0.0))
-
-        if args.R_tol is not None:
-            mask[lap>args.R_tol]=0
-
-        if args.facet_tol is not None:
-            mask1=mask.copy()
-            mask1[lap < args.facet_tol]=0
-            mask1=snd.binary_closing(snd.binary_opening(mask1, structure=opening_kernel), structure=closing_kernel)
-            #mask1=snd.binary_erosion(mask1, structure=simplify_kernel);
-            mask[mask1==0]=0
-
-        if args.smooth_scale is not None:
-            zs, mask2 = smooth_corrected(z, mask, w_smooth)
-            mask[np.abs(in_sub.z[0,:,:]-zs)>args.smooth_tol]=0.
-
-        if args.slope_tol is not None:
-             gx, gy=np.gradient(zs, dx, dx)
-             mask[gx**2+gy**2 > args.slope_tol**2]=0
-             z[mask==0]=0
-
-        if args.simplify_by is not None:
-             mask1=mask.copy()
-             mask1=snd.binary_erosion(mask1, k_simplify)
-             mask1=snd.binary_dilation(mask1, k_simplify)
-             mask[mask1==0]=0
-
-        if args.erode_By is not None:
-            mask=snd.binary_erosion(mask, k_erode)
-            z[mask==0]=0
-
-        if args.decimate_by is not None:  # smooth again and decimate
-            zs, mask1=smooth_corrected(z, mask, w_smooth)
-            zs[mask1 < .25]=0
-            mask[mask1 < .25]=0
-            if args.error_RMS_scale is not None:
-                r2=(z-zs)**2
-                r2[mask==0]=0
-                r2, dummy=smooth_corrected(r2, mask, w_smooth)
-                r2[mask==0]=0
-                r2=r2[int(dec/2.+0.5)::dec, int(dec/2.+0.5)::dec]
-            zs=zs[int(dec/2.+0.5)::dec, int(dec/2.+0.5)::dec]  # this is now the same res as the output image, includes pad
-            #print "decimate:r2.shape=%d %d "%r2.shape
-            #print "decimate:zs.shape=%d %d "%zs.shape
-            z=zs
-            mask=mask[int(dec/2.+0.5)::dec, int(dec/2.+0.5)::dec]
-            z[mask==0]=0
-
-        if args.geolocation_error is not None and args.geolocation_error > 0:
-            gx, gy=np.gradient(zs, dec*dx, dec*dx)
-            mask1=snd.binary_erosion(mask, np.ones((3,3)))
-            gxs, mask_x=smooth_corrected(gx, mask1, 4)
-            gys, mask_y=smooth_corrected(gy, mask1, 4)
-            edge_mask=(mask==1) & (mask1==0) & (mask_x >.25)
-            gx[mask1==0]=0
-            gy[mask1==0]=0
-            gx[ edge_mask ] = gxs[edge_mask]
-            gy[ edge_mask ] = gys[edge_mask ]
-            e2_geo=(gx**2+gy**2)*args.geolocation_error**2
-            e2_geo[mask==0]=0
-        else:
-            e2_geo=np.zeros_like(zs)
-
-        if args.error_RMS_scale is not None:
-            zss, mask2=smooth_corrected(z, mask, w_error)
-            r2s, dummy=smooth_corrected(e2_geo+(zss-z)**2, mask, w_error)
-            r2, dummy=smooth_corrected(r2, mask, w_error)
-            error_est=np.sqrt(r2s+r2)
-            error_est[mask==0]=np.NaN
-            out_temp[1,:,:]=error_est[pad:-(pad), pad:-(pad)]
-        else:
-            out_temp[1,:,:]=e2_geo[pad:-pad, pad:-pad]
-
-        z[mask==0]=np.NaN
-        out_temp[0,:,:]=z[pad:-(pad), pad:-(pad)]
-
-        out_sub.z=out_temp
-        out_sub.setBounds(out_sub.c0+pad, out_sub.r0+pad, out_sub.Nc-2*pad, out_sub.Nr-2*pad)
-        out_sub.writeSubsetTo(out_bands, out_sub)
-        delta_time=time.time()-last_time
-        sys.stdout.write("\r\b %d out of %d, last dt=%f" %(sub_count, out_sub.xy0.shape[0], delta_time))
-        sys.stdout.flush()
-        last_time=time.time()
-        #print('\n')
-        #mem_by_class()
-        #print('----')
-    outDs.SetGeoTransform(tuple(xform_out))
-    for b in out_bands:
-        outDs.GetRasterBand(b).SetNoDataValue(np.NaN)
-    outDs.SetProjection(in_ds.GetProjection())
-    outDs=None
+            delta_time=time.time()-last_time
+            sys.stdout.write("\r\b %d out of %d, last dt=%f" %(sub_count, out_sub.xy0.shape[0], delta_time))
+            sys.stdout.flush()
+            last_time=time.time()
+            #print('\n')
+            #mem_by_class()
+            #print('----')
+        outDs.SetGeoTransform(tuple(xform_out))
+        for b in out_bands:
+            outDs.GetRasterBand(b).SetNoDataValue(np.NaN)
+        outDs.SetProjection(in_ds.GetProjection())
+        outDs=None
+    
+    except Exception as e:
+        print(f"Error occurred: {e}")
+        with open(done_file, 'w') as f:
+            f.write(f"Error occurred: {e}")
+        sys.exit(1)
+        
+    finally:
+        # remove .tmp file, create the .done file
+        if os.path.exists(tmp_file): os.remove(tmp_file)
+        with open(done_file, 'w') as f:
+            f.write("Processed successfully.\n")
 
 def main(args=None):
     if args is None:

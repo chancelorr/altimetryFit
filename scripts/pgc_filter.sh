@@ -3,6 +3,7 @@
 # building off get_pgc_fullres.sh by ben
 # by chance
 
+
 # Arguments
 
 # PGC s3 url
@@ -38,9 +39,12 @@ done
 #wget -q $dem_url && wget -q $match_url && wget -q $mask_url || $(echo "COULD NOT DOWNLOAD"; exit 1)
 
 echo -e "\nrunning dem_filter.py\n"
-[ -f $filter_arg_file ] && dem_filter.py $dem_file $filt_file @$filter_arg_file && exit
+echo "dem_filter.py $output_dir/$dem_file $output_dir/$filt_file @$filter_arg_file"
+[ -f $filter_arg_file ] && dem_filter.py $output_dir/$dem_file $output_dir/$filt_file @$filter_arg_file --overwrite True && exit
 
+echo "dem_filter.py $output_dir/$dem_file $output_dir/$filt_file @default_args.txt"
 [ -f default_args.txt ] && dem_filter.py $dem_file $filt_file @default_args.txt
 
 #[ -f $filt_file ] && $(rm $dem_file $match_file $mask_file)
+
 

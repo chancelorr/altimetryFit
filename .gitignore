@@ -139,7 +139,7 @@ dmypy.json
 # Other stuff:
 Untitled*.ipynb
 untitled*.ipynb
-notebooks/*
+#notebooks/*
 *queue*.txt
 \#*
 par_run*/
