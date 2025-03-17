@@ -65,7 +65,7 @@ def parse_input_args(args):
     parser.add_argument('--ref_dem_tol', type=float, default=50)
     parser.add_argument('--ref_dem_smooth', type=float, default=200)
     parser.add_argument('--ref_dem_erode', type=float, default=50)
-    parser.add_argument('--overwrite', type=bool, default=False)
+    parser.add_argument('--overwrite', action='store_true', default=False)
 
 
     args=parser.parse_args()
