@@ -2,6 +2,8 @@
 shapes/*
 !shapes/.gitkeep
 
+# figures
+figs/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
