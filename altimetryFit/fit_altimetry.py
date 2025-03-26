@@ -703,7 +703,8 @@ def fit_altimetry(xy0=None, Width=4e4, \
             else:
                 this_Wxy, this_xy0 = [Width, xy0]
 
-            apply_tides(data, this_xy0, this_Wxy,
+            #apply_tides(data, this_xy0, this_Wxy,
+            compute_tide_corrections(data, this_xy0, this_Wxy,
                             tide_mask_file=tide_mask_file,
                             tide_mask_data=None,
                             tide_directory=tide_directory,
@@ -714,7 +715,6 @@ def fit_altimetry(xy0=None, Width=4e4, \
                             cutoff=200,
                             EPSG=EPSG)
 
-            #apply_tides( tide_mask_file, tide_directory, tide_model, EPSG=EPSG)
     else:
         data, sensor_dict = reread_data_from_fits(xy0, Width, reread_dirs, template='E%d_N%d.h5')
 
