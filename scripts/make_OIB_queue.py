@@ -28,7 +28,7 @@ for i, arg in enumerate(argv):
     if (arg[0] == '-') and arg[1].isdigit(): argv[i] = ' ' + arg
 
 
-parser=argparse.ArgumentParser(description="generate a list of commands to run fit_OIB.py")
+parser=argparse.ArgumentParser(description="generate a list of commands to run fit_altimetry.py")
 parser.add_argument('step', type=str)
 parser.add_argument('defaults_file', type=str)
 parser.add_argument('--region_file', '-R', type=str)
@@ -45,7 +45,7 @@ if args.step not in ['prelim','matched']:
 
 XR, YR= [ None, None ]
 if args.region_file is not None:
-    line_re=re.compile('(..)\s*=\s*\[\s*(\S+),\s*(\S+)\s*]')
+    line_re=re.compile(r'(..)\s*=\s*\[\s*(\S+),\s*(\S+)\s*]')
     temp={}
     with open(args.region_file,'r') as fh:
         for line in fh:
@@ -54,7 +54,7 @@ if args.region_file is not None:
     XR=temp['XR']
     YR=temp['YR']
 
-defaults_re=re.compile('(.*)\s*=\s*(.*)')
+defaults_re=re.compile(r'(.*)\s*=\s*(.*)')
 defaults={}
 with open(args.defaults_file,'r') as fh:
    for line in fh:
