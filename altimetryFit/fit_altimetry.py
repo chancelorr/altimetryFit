@@ -17,7 +17,7 @@ import os
 import sys
 import re
 
-threads_re=re.compile("THREADS=(\S+)")
+threads_re=re.compile(r"THREADS=(\S+)")
 n_threads="1"
 for arg in sys.argv:
     try:
@@ -81,7 +81,7 @@ def make_sensor_dict(h5_file):
         if '/meta/sensors/' not in h5f:
             return this_sensor_dict
 
-        sensor_re=re.compile('sensor_(\d+)')
+        sensor_re=re.compile(r'sensor_(\d+)')
         for sensor_key, sensor in h5f['/meta/sensors/'].attrs.items():
             sensor_num=int(sensor_re.search(sensor_key).group(1))
             this_sensor_dict[sensor_num]=sensor
@@ -120,7 +120,7 @@ def custom_edits(data):
 
 def mask_data_by_year(data, mask_dir):
     masks={}
-    year_re=re.compile('(\d\d\d\d.+\d+).tif')
+    year_re=re.compile(r'(\d\d\d\d.+\d+).tif')
     for file in glob.glob(mask_dir+'/*.tif'):
         m=year_re.search(file)
         if m is not None:
@@ -533,7 +533,7 @@ def fit_altimetry(xy0=None, Width=4e4, \
             lagrangian_dict=None, \
             shelf_only=False,\
             tide_directory=None, \
-            tide_model='CATS2008', \
+            tide_model='CATS2008_v2023', \
             tide_adjustment_file=None,
             year_mask_dir=None, \
             avg_scales=None,\
@@ -864,7 +864,7 @@ def parse_inputs(argv):
     parser.add_argument('--grid_spacing','-g', type=str, help='grid spacing:DEM (meters),dh maps xy (meters),dh_maps time (years): comma-separated, no spaces', default='250.,4000.,1.')
     parser.add_argument('--Hemisphere','-H', type=int, default=1, help='hemisphere: -1=Antarctica, 1=Greenland')
     parser.add_argument('--base_directory','-b', type=path, help='base directory')
-    parser.add_argument('--GeoIndex_source_file', type=path, help='json file containing locations for geoIndex files')
+    parser.add_argument('--GeoIndex_source_file', type=str, default='GeoIndex.h5', help='json file containing locations for geoIndex files')
     parser.add_argument('--reread_file', type=str, help='reread data from this file')
     parser.add_argument('--out_name', '-o', type=path, help="output file name")
     parser.add_argument('--dzdt_lags', type=str, default='1,2,4', help='lags for which to calculate dz/dt, comma-separated list, no spaces')
@@ -956,7 +956,7 @@ def parse_inputs(argv):
 
     # read in the geoIndex locations
     with open(args.GeoIndex_source_file) as fh:
-        args.geoIndex_dict=json.load(fh)
+           args.geoIndex_dict=json.load(fh)
 
     if args.full_FAC_correction:
         args.calc_FAC_anomaly=False
@@ -1034,9 +1034,6 @@ def parse_inputs(argv):
             os.mkdir(dest_dir)
         except FileExistsError:
             pass
-
-    if args.out_name is None:
-        args.out_name=dest_dir + '/E%d_N%d.h5' % (args.xy0[0]/1e3, args.xy0[1]/1e3)
 
     args.lagrangian_dict=None
     if args.lagrangian:
